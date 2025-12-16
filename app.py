@@ -5,60 +5,60 @@ import pandas as pd
 # Sayfa Ayarları
 st.set_page_config(page_title="NBA Tahmincisi", page_icon="🏀")
 
-# Başlık
 st.title("🏀 NBA Maç Tahmin Botu")
-st.write("Makine Öğrenimi modeli ile maç sonucunu tahmin et.")
 
-# 1. Modeli Yükle
+# 1. Modeli ve Takım Listesini Yükle
 try:
-    model = joblib.load('nba_model.pkl')
+    data = joblib.load('nba_model.pkl')
+    # Paketin içinden modeli ve listeyi çıkarıyoruz
+    model = data['model']
+    teams = data['teams']
 except:
-    st.error("Model dosyası bulunamadı! Lütfen önce train.py dosyasını çalıştırın.")
+    st.error("Model dosyası eksik veya hatalı! Lütfen train.py dosyasını tekrar çalıştırın.")
     st.stop()
 
 # 2. Kullanıcı Girişi (Kenar Çubuğu)
-st.sidebar.header("Maç Verileri")
-team_home = st.sidebar.text_input("Ev Sahibi Takım", "Lakers")
-team_away = st.sidebar.text_input("Deplasman Takımı", "Celtics")
+st.sidebar.header("Maç Seçimi")
 
-st.sidebar.subheader("Bahis Oranları (Moneyline)")
-st.sidebar.info("Örnek: -150 (Favori) veya +130 (Underdog)")
-ml_home = st.sidebar.number_input("Ev Sahibi Oranı", value=-150)
-ml_away = st.sidebar.number_input("Deplasman Oranı", value=130)
+# Takımları Listeden Seçtirme (Selectbox)
+team_home = st.sidebar.selectbox("Ev Sahibi Takım", teams, index=0) # İlk sıradaki seçili gelir
+team_away = st.sidebar.selectbox("Deplasman Takımı", teams, index=1) # İkinci sıradaki seçili gelir
 
-# Oran Dönüştürücü Fonksiyon (Aynısı)
-def convert_odds(odd):
-    if odd > 0: return (odd / 100) + 1
-    else: return (100 / abs(odd)) + 1
+st.sidebar.divider()
+
+st.sidebar.header("Bahis Oranları (Decimal)")
+st.sidebar.info("Örnek: 1.66, 2.40 gibi ondalık oran giriniz.")
+
+# Ondalık Giriş (Step 0.01 sayesinde 1.66 gibi girilebilir)
+odds_home = st.sidebar.number_input("Ev Sahibi Oranı (1.xx)", min_value=1.01, value=1.50, step=0.01, format="%.2f")
+odds_away = st.sidebar.number_input("Deplasman Oranı (1.xx)", min_value=1.01, value=2.50, step=0.01, format="%.2f")
 
 # 3. Tahmin Butonu
 if st.button("MAÇI TAHMİN ET"):
-    # Girdileri hazırla
-    decimal_home = convert_odds(ml_home)
-    decimal_away = convert_odds(ml_away)
-    
+    # Girdileri hazırla (Artık çeviri yapmıyoruz, direkt giriyoruz)
     input_data = pd.DataFrame({
-        'odds_home': [decimal_home],
-        'odds_away': [decimal_away]
+        'odds_home': [odds_home],
+        'odds_away': [odds_away]
     })
     
     # Tahmin Yap
     prediction = model.predict(input_data)[0]
     probability = model.predict_proba(input_data)[0]
     
+    prob_home = probability[1]
+    prob_away = probability[0]
+
     # Sonucu Göster
     st.divider()
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Ev Sahibi")
-        st.write(f"**{team_home}**")
-        st.metric(label="Kazanma İhtimali", value=f"%{probability[1]*100:.1f}")
+        st.subheader(f"🏠 {team_home}")
+        st.metric(label="Kazanma İhtimali", value=f"%{prob_home*100:.1f}")
         
     with col2:
-        st.subheader("Deplasman")
-        st.write(f"**{team_away}**")
-        st.metric(label="Kazanma İhtimali", value=f"%{probability[0]*100:.1f}")
+        st.subheader(f"✈️ {team_away}")
+        st.metric(label="Kazanma İhtimali", value=f"%{prob_away*100:.1f}")
     
     st.divider()
     
@@ -67,14 +67,18 @@ if st.button("MAÇI TAHMİN ET"):
     else:
         st.error(f"🏆 Tahmin: **{team_away}** Kazanır!")
         
-    # Value Bet Analizi (Basit)
-    implied_prob_home = 1 / decimal_home
-    my_prob_home = probability[1]
+    # Value Bet Analizi
+    # Bahis şirketinin olasılığı = 1 / Oran
+    implied_prob_home = 1 / odds_home
     
     st.subheader("💡 Bahis Analizi")
-    if my_prob_home > implied_prob_home:
-        st.info(f"Değerli Bahis! Model {team_home} takımına bahisten daha fazla şans veriyor. (Model: %{my_prob_home*100:.0f} vs Bahis: %{implied_prob_home*100:.0f})")
-    elif probability[0] > (1/decimal_away):
-        st.info(f"Değerli Bahis! Model {team_away} takımına bahisten daha fazla şans veriyor.")
+    
+    # Modelin tahmini > Bahis şirketinin tahmini ise Value vardır
+    if prob_home > implied_prob_home:
+        roi = (prob_home * odds_home) - 1
+        st.info(f"✅ **Değerli Bahis (Value Bet)!**\n\nModel, {team_home} takımına bahis şirketinden daha fazla güveniyor.\n(Beklenen Kâr: %{roi*100:.1f})")
+    elif prob_away > (1 / odds_away):
+        roi = (prob_away * odds_away) - 1
+        st.info(f"✅ **Değerli Bahis (Value Bet)!**\n\nModel, {team_away} takımına bahis şirketinden daha fazla güveniyor.\n(Beklenen Kâr: %{roi*100:.1f})")
     else:
-        st.warning("Bu maçta riskli veya değersiz oranlar var.")
+        st.warning("⚠️ **Pas Geç.** Oranlar riske girmeye değecek kadar yüksek değil.")
